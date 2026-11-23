@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: de_lab_postgres
+    environment:
+      POSTGRES_USER: de_user
+      POSTGRES_PASSWORD: de_password
+      POSTGRES_DB: de_warehouse
+    ports:
+      - "5433:5432"
+    volumes:
+      - de_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  de_pgdata:
