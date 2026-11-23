@@ -3,10 +3,11 @@ import requests
 from psycopg2.extras import execute_values
 import os
 from dotenv import load_dotenv
+from typing import Any
 
 DATALAB_URL = "https://mon-amour-pfh9.onrender.com/datalab/"
 LOGIN_URL = "https://mon-amour-pfh9.onrender.com/login/?next=/datalab/"
-
+JSON_DATALAB_URL = "https://mon-amour-pfh9.onrender.com/datalab/export/json/"
 
 load_dotenv()
 
@@ -48,7 +49,8 @@ def create_logged_in_session(email: str, password: str) -> requests.Session:
         headers={"Referer": LOGIN_URL},
         timeout=20,
     )
-    resp.raise_for_status()
+    if "/login" in resp.url:
+        raise RuntimeError("Не удалось войти: сервер вернул страницу логина (проверь логин/пароль)")
 
     return session
 
@@ -59,12 +61,79 @@ def fetch_datalab_page(session: requests.Session) -> requests.Response:
     return response
 
 
+def fetch_datalab_json(session: requests.Session) -> Any:
+    response = session.get(JSON_DATALAB_URL, timeout=20)
+    response.raise_for_status()
+    return response.json()
+
+
+def extract_transactions(payload: dict) -> list[dict]:
+  if not isinstance(payload, dict):
+    raise ValueError("Expected payload to be a dict")
+
+  transactions = payload.get("fact_kiss_transactions")
+  if not isinstance(transactions, list):
+    raise ValueError("Expected 'fact_kiss_transactions' to be a list")
+
+  return transactions
+
+
+def flatten_transaction(tx: dict) -> dict:
+    sender = tx.get("sender") or {}
+    receiver = tx.get("receiver") or {}
+    service = tx.get("service") or {}
+
+    return {
+        "transaction_id": tx.get("transaction_id"),
+        "sender_love_code": sender.get("love_code"),
+        "sender_name": sender.get("name"),
+        "receiver_love_code": receiver.get("love_code"),
+        "receiver_name": receiver.get("name"),
+        "service_id": service.get("id"),
+        "service_title": service.get("title"),
+        "service_category": service.get("category"),
+        "is_free_reward": tx.get("is_free_reward"),
+        "scheduled_date": tx.get("scheduled_date"),
+        "kisses_amount": tx.get("kisses_amount"),
+        "status": tx.get("status"),
+        "love_note": tx.get("love_note"),
+        "created_at": tx.get("created_at"),
+        "completed_at": tx.get("completed_at"),
+    }
+
+
+def flatten_transactions(transactions: list[dict]) -> list[dict]:
+    flat_transactions = []
+    for i in transactions:
+        flat_transactions.append(flatten_transaction(i))
+    return flat_transactions
+
+
+def get_db_connection():
+    return psycopg2.connect(
+        host=os.getenv("DB_HOST", "localhost"),
+        port=int(os.getenv("DB_PORT", "5433")),
+        dbname=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+    )
+
+
 if __name__ == "__main__":
     email, password = get_credentials()
     session = create_logged_in_session(email, password)
     page_resp = fetch_datalab_page(session)
 
-    print("Итоговый URL:", page_resp.url)
-    print("Статус код:", page_resp.status_code)
-    print("Content-Type:", page_resp.headers.get("Content-Type"))
-    print("Фрагмент ответа:", page_resp.text[:500])
+    data_json = fetch_datalab_json(session)
+    extract_data_json = extract_transactions(data_json)
+
+
+    # print("Итоговый URL:", page_resp.url)
+    # print("Статус код:", page_resp.status_code)
+    # print("Content-Type:", page_resp.headers.get("Content-Type"))
+    # print("Фрагмент ответа:", page_resp.text[1500:3000])
+    conn = get_db_connection()
+    print("DB OK:", conn)
+    conn.close()
+    # print("json:\n", extract_data_json)
+    # print(flatten_transactions(extract_data_json))
